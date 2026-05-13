@@ -108,7 +108,7 @@ export default function ProfitPage() {
   }
 
   const toggleExclude = (set: Set<string>, setter: (s: Set<string>) => void, name: string) => {
-    setter(prev => {
+    setter((prev: Set<string>) => {
       const next = new Set(prev)
       next.has(name) ? next.delete(name) : next.add(name)
       return next
