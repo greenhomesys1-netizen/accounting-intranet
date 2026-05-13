@@ -2,6 +2,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 
+const 고정지출자동집계대상 = new Set(['급여','임차료','관리비','통신비','보험료','광고선전비','이자비용','리스료','이자','수수료'])
+
 export default function DashboardPage() {
   const today = new Date()
   const thisMonth = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`
@@ -14,33 +16,55 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const fetchAll = async () => {
+      const [y, m] = thisMonth.split('-')
+      const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate()
+      const startDate = `${thisMonth}-01`
+      const endDate = `${thisMonth}-${String(lastDay).padStart(2,'0')}`
+
+      // 자금현황 입출금
       const { data: txData } = await supabase
         .from('transactions')
-        .select('*')
-        .gte('date', `${thisMonth}-01`)
-        .lte('date', `${thisMonth}-31`)
+        .select('income, expense, category')
+        .gte('date', startDate)
+        .lte('date', endDate)
       if (txData) {
         setIncome(txData.reduce((s,i) => s+i.income, 0))
         setExpense(txData.reduce((s,i) => s+i.expense, 0))
+
+        // 자동집계: 고정/변동 분류
+        let autoFixed = 0
+        let autoVar = 0
+        txData.forEach((tx: any) => {
+          if (tx.expense > 0) {
+            if (고정지출자동집계대상.has(tx.category)) {
+              autoFixed += tx.expense
+            } else {
+              autoVar += tx.expense
+            }
+          }
+        })
+
+        // 수동입력 고정지출
+        const { data: fixedData } = await supabase
+          .from('fixed_expenses').select('amount').eq('month', thisMonth)
+        const manualFixed = fixedData ? fixedData.reduce((s,i) => s+i.amount, 0) : 0
+
+        // 수동입력 변동지출
+        const { data: varData } = await supabase
+          .from('variable_expenses').select('amount').eq('month', thisMonth)
+        const manualVar = varData ? varData.reduce((s,i) => s+i.amount, 0) : 0
+
+        setFixedTotal(manualFixed + autoFixed)
+        setVarTotal(manualVar + autoVar)
       }
+
+      // 최신 잔액
       const { data: lastTx } = await supabase
         .from('transactions')
         .select('balance')
         .order('date', { ascending: false })
         .limit(1)
       if (lastTx && lastTx.length > 0) setBalance(lastTx[0].balance)
-
-      const { data: fixedData } = await supabase
-        .from('fixed_expenses')
-        .select('amount')
-        .eq('month', thisMonth)
-      if (fixedData) setFixedTotal(fixedData.reduce((s,i) => s+i.amount, 0))
-
-      const { data: varData } = await supabase
-        .from('variable_expenses')
-        .select('amount')
-        .eq('month', thisMonth)
-      if (varData) setVarTotal(varData.reduce((s,i) => s+i.amount, 0))
 
       setLoading(false)
     }

@@ -32,15 +32,30 @@ export default function CashbookPage() {
   const [saved, setSaved] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadResult, setUploadResult] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
 
-  // 필터
   const [filterYear, setFilterYear] = useState(String(thisYear))
   const [filterMonth, setFilterMonth] = useState(String(thisMonth))
   const fileRef = useRef<HTMLInputElement>(null)
 
   const fmt = (n: number) => n === 0 ? '-' : n.toLocaleString('ko-KR')
-  const totalIncome = list.reduce((s,i) => s+i.income, 0)
-  const totalExpense = list.reduce((s,i) => s+i.expense, 0)
+
+  // 검색 필터 적용
+  const filteredList = list.filter(item => {
+    if (!searchQuery.trim()) return true
+    const q = searchQuery.toLowerCase()
+    return (
+      item.description?.toLowerCase().includes(q) ||
+      item.category?.toLowerCase().includes(q) ||
+      item.evidence_type?.toLowerCase().includes(q) ||
+      item.note?.toLowerCase().includes(q) ||
+      String(item.income).includes(q.replace(/,/g,'')) ||
+      String(item.expense).includes(q.replace(/,/g,''))
+    )
+  })
+
+  const totalIncome = filteredList.reduce((s,i) => s+i.income, 0)
+  const totalExpense = filteredList.reduce((s,i) => s+i.expense, 0)
 
   const handleAmountChange = (value: string) => {
     const raw = value.replace(/,/g, '')
@@ -110,7 +125,6 @@ export default function CashbookPage() {
     await fetchData()
   }
 
-  // 엑셀 업로드
   const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -130,11 +144,6 @@ export default function CashbookPage() {
         const items = []
         let runningBalance = 0
 
-        
-        
-        
-    
-
         for (let i = 1; i < rows.length; i++) {
           const row = rows[i]
           if (!row || !row[0]) continue
@@ -144,7 +153,6 @@ export default function CashbookPage() {
           if (rawDate instanceof Date) {
             dateStr = rawDate.toISOString().split('T')[0]
           } else if (typeof rawDate === 'string') {
-            // 날짜 문자열 파싱
             dateStr = rawDate.replace(/\./g, '-').trim()
             if (dateStr.endsWith('-')) dateStr = dateStr.slice(0, -1)
           }
@@ -173,7 +181,6 @@ export default function CashbookPage() {
           })
         }
 
-        // 100개씩 나눠서 INSERT
         let inserted = 0
         for (let i = 0; i < items.length; i += 100) {
           const chunk = items.slice(i, i + 100)
@@ -203,7 +210,6 @@ export default function CashbookPage() {
           <p className="text-sm text-gray-400 mt-1">법인통장 입출금 내역을 날짜별로 입력합니다</p>
         </div>
         <div className="flex gap-3">
-          {/* 엑셀 업로드 */}
           <label className="bg-green-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-green-700 cursor-pointer">
             {uploading ? '업로드 중...' : '📂 엑셀 업로드'}
             <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleExcelUpload} disabled={uploading} />
@@ -215,15 +221,14 @@ export default function CashbookPage() {
         </div>
       </div>
 
-      {/* 업로드 결과 */}
       {uploadResult && (
         <div className={`px-4 py-3 rounded-lg mb-4 text-sm ${uploadResult.includes('✅') ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
           {uploadResult}
         </div>
       )}
 
-      {/* 월별 필터 */}
-      <div className="flex items-center gap-3 mb-6 bg-white border rounded-xl px-4 py-3">
+      {/* 월별 필터 + 검색 */}
+      <div className="flex items-center gap-3 mb-6 bg-white border rounded-xl px-4 py-3 flex-wrap">
         <span className="text-sm text-gray-500 font-medium">조회 기간</span>
         <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
           className="border rounded-lg px-3 py-1.5 text-sm">
@@ -233,7 +238,19 @@ export default function CashbookPage() {
           className="border rounded-lg px-3 py-1.5 text-sm">
           {months.map(m => <option key={m} value={m}>{m}월</option>)}
         </select>
-        <span className="text-xs text-gray-400">{list.length}건</span>
+        <span className="text-xs text-gray-400">{filteredList.length}건</span>
+        <div className="flex-1 min-w-48">
+          <input
+            type="text"
+            placeholder="🔍 거래내용, 계정, 금액 검색..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
+        </div>
+        {searchQuery && (
+          <button onClick={() => setSearchQuery('')} className="text-xs text-gray-400 hover:text-gray-600">✕ 초기화</button>
+        )}
       </div>
 
       {/* 요약 카드 */}
@@ -341,12 +358,12 @@ export default function CashbookPage() {
             </tr>
           </thead>
           <tbody>
-            {list.length === 0 ? (
+            {filteredList.length === 0 ? (
               <tr><td colSpan={8} className="text-center py-12 text-gray-400">
-                거래 내역이 없습니다. 엑셀 업로드 또는 직접 입력하세요.
+                {searchQuery ? `"${searchQuery}" 검색 결과가 없습니다.` : '거래 내역이 없습니다. 엑셀 업로드 또는 직접 입력하세요.'}
               </td></tr>
             ) : (
-              list.map((item) => (
+              filteredList.map((item) => (
                 <tr key={item.id} className={`border-b hover:bg-gray-50 ${item.income > 0 ? 'bg-green-50/20' : ''}`}>
                   <td className="px-4 py-3 text-gray-600">{item.date}</td>
                   <td className="px-4 py-3">
