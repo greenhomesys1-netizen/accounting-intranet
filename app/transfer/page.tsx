@@ -1,6 +1,7 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
+import * as XLSX from 'xlsx'
 
 type Transfer = {
   id: string
@@ -19,6 +20,9 @@ export default function TransferPage() {
   const [editItem, setEditItem] = useState<Transfer | null>(null)
   const [form, setForm] = useState({ date: '', description: '김상대', bank: '토스뱅크', amount: '', type: 'out' as 'out'|'in', note: '' })
   const [saved, setSaved] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadResult, setUploadResult] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const fmt = (n: number) => n.toLocaleString('ko-KR')
   const totalOut = list.filter(i => i.type === 'out').reduce((s, i) => s + i.amount, 0)
@@ -29,18 +33,14 @@ export default function TransferPage() {
 
   const fetchData = async () => {
     setLoading(true)
-    const { data } = await supabase
-      .from('transfers')
-      .select('*')
-      .order('date', { ascending: false })
+    const { data } = await supabase.from('transfers').select('*').order('date', { ascending: false })
     if (data) setList(data)
     setLoading(false)
   }
 
   const resetForm = () => {
     setForm({ date: '', description: '김상대', bank: '토스뱅크', amount: '', type: 'out', note: '' })
-    setEditItem(null)
-    setShowForm(false)
+    setEditItem(null); setShowForm(false)
   }
 
   const handleSave = async () => {
@@ -57,9 +57,7 @@ export default function TransferPage() {
         amount: amt, type: form.type, note: form.note
       })
     }
-    await fetchData()
-    resetForm()
-    setSaved(true)
+    await fetchData(); resetForm(); setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
 
@@ -67,8 +65,7 @@ export default function TransferPage() {
     setEditItem(item)
     setForm({ date: item.date, description: item.description, bank: item.bank,
       amount: String(item.amount), type: item.type, note: item.note })
-    setShowForm(true)
-    window.scrollTo(0, 0)
+    setShowForm(true); window.scrollTo(0, 0)
   }
 
   const handleDelete = async (id: string) => {
@@ -77,39 +74,98 @@ export default function TransferPage() {
     await fetchData()
   }
 
-  // 자금현황에서 김상대 거래 불러오기
-  const loadFromCashbook = async () => {
-    if (!confirm('자금현황에서 김상대 거래내역을 불러올까요?\n(중복은 자동 제외됩니다)')) return
-    const { data: txData } = await supabase
-      .from('transactions')
-      .select('date, description, income, expense')
-      .eq('description', '김상대')
+  // 엑셀 업로드
+  const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    setUploadResult('')
 
-    if (!txData || txData.length === 0) { alert('자금현황에서 김상대 거래를 찾을 수 없어요.'); return }
+    const reader = new FileReader()
+    reader.onload = async (evt) => {
+      try {
+        const data = evt.target?.result
+        const wb = XLSX.read(data, { type: 'array', cellDates: true })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false }) as any[][]
 
-    let inserted = 0
-    for (const tx of txData) {
-      const type = tx.income > 0 ? 'in' : 'out'
-      const amount = tx.income > 0 ? tx.income : tx.expense
+        const items: Omit<Transfer, 'id'>[] = []
 
-      const { data: existing } = await supabase
-        .from('transfers')
-        .select('id')
-        .eq('date', tx.date)
-        .eq('amount', amount)
-        .eq('type', type)
-        .limit(1)
+        // 출금내역: A열(날짜), B열(거래내용), D열(은행), E열(출금액) - 5행부터
+        for (let i = 4; i < rows.length; i++) {
+          const row = rows[i]
+          if (!row || !row[0]) continue
+          const rawDate = row[0]
+          if (String(rawDate).includes('합')) continue
 
-      if (!existing || existing.length === 0) {
-        await supabase.from('transfers').insert({
-          date: tx.date, description: '김상대', bank: '토스뱅크',
-          amount, type, note: ''
-        })
-        inserted++
+          let dateStr = ''
+          if (rawDate instanceof Date) {
+            dateStr = rawDate.toISOString().split('T')[0]
+          } else {
+            dateStr = String(rawDate).trim()
+          }
+          if (!dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) continue
+
+          const amount = parseFloat(String(row[4] || '0').replace(/,/g, '')) || 0
+          if (amount <= 0) continue
+
+          items.push({
+            date: dateStr,
+            description: String(row[1] || '김상대').trim(),
+            bank: String(row[3] || '').trim(),
+            amount,
+            type: 'out',
+            note: ''
+          })
+        }
+
+        // 입금내역: G열(날짜), H열(거래내용), I열(은행), K열(입금액) - 5행부터
+        for (let i = 4; i < rows.length; i++) {
+          const row = rows[i]
+          if (!row || !row[6]) continue
+          const rawDate = row[6]
+          if (String(rawDate).includes('합')) continue
+
+          let dateStr = ''
+          if (rawDate instanceof Date) {
+            dateStr = rawDate.toISOString().split('T')[0]
+          } else {
+            dateStr = String(rawDate).trim()
+          }
+          if (!dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) continue
+
+          const amount = parseFloat(String(row[10] || '0').replace(/,/g, '')) || 0
+          if (amount <= 0) continue
+
+          items.push({
+            date: dateStr,
+            description: String(row[7] || '김상대').trim(),
+            bank: String(row[8] || '').trim(),
+            amount,
+            type: 'in',
+            note: ''
+          })
+        }
+
+        let inserted = 0
+        for (const item of items) {
+          const { data: existing } = await supabase
+            .from('transfers').select('id')
+            .eq('date', item.date).eq('amount', item.amount).eq('type', item.type).limit(1)
+          if (!existing || existing.length === 0) {
+            const { error } = await supabase.from('transfers').insert(item)
+            if (!error) inserted++
+          }
+        }
+        setUploadResult(`✅ ${inserted}건 업로드 완료! (전체 ${items.length}건 중 중복 제외)`)
+        await fetchData()
+      } catch (err) {
+        setUploadResult('❌ 업로드 실패: ' + String(err))
       }
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
     }
-    alert(`${inserted}건 불러왔어요!`)
-    await fetchData()
+    reader.readAsArrayBuffer(file)
   }
 
   return (
@@ -120,16 +176,22 @@ export default function TransferPage() {
           <p className="text-sm text-gray-400 mt-1">법인 ↔ 김상대 대표님 입출금 내역</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={loadFromCashbook}
-            className="bg-gray-100 text-gray-700 px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-200">
-            🔄 자금현황 연동
-          </button>
-          <button onClick={() => { resetForm(); setShowForm(true) }}
+          <label className="bg-green-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-green-700 cursor-pointer">
+            {uploading ? '업로드 중...' : '📂 엑셀 업로드'}
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleExcelUpload} disabled={uploading} />
+          </label>
+          <button onClick={() => { resetForm(); setShowForm(!showForm) }}
             className="bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700">
             + 직접 입력
           </button>
         </div>
       </div>
+
+      {uploadResult && (
+        <div className={`px-4 py-3 rounded-lg mb-4 text-sm ${uploadResult.includes('✅') ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+          {uploadResult}
+        </div>
+      )}
 
       {/* 요약 카드 */}
       <div className="grid grid-cols-3 gap-4 mb-6">
@@ -144,16 +206,14 @@ export default function TransferPage() {
           <p className="text-xs text-gray-400 mt-1">{list.filter(i=>i.type==='in').length}건</p>
         </div>
         <div className={`border rounded-xl p-4 ${balance >= 0 ? 'bg-blue-50 border-blue-100' : 'bg-orange-50 border-orange-100'}`}>
-          <p className="text-xs text-gray-500">미상환 잔액 (대표→법인 기준)</p>
+          <p className="text-xs text-gray-500">미상환 잔액</p>
           <p className={`text-xl font-bold mt-1 ${balance >= 0 ? 'text-blue-600' : 'text-orange-500'}`}>{fmt(Math.abs(balance))}원</p>
           <p className="text-xs text-gray-400 mt-1">{balance >= 0 ? '대표님이 더 입금' : '법인이 더 출금'}</p>
         </div>
       </div>
 
       {saved && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg mb-4 text-sm">
-          ✅ 저장됐어요!
-        </div>
+        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg mb-4 text-sm">✅ 저장됐어요!</div>
       )}
 
       {/* 입력 폼 */}
@@ -184,20 +244,17 @@ export default function TransferPage() {
             </div>
             <div>
               <label className="text-xs text-gray-500 mb-1 block">거래내용</label>
-              <input type="text" value={form.description}
-                onChange={e => setForm({...form, description: e.target.value})}
+              <input type="text" value={form.description} onChange={e => setForm({...form, description: e.target.value})}
                 className="w-full border rounded-lg px-3 py-2 text-sm" />
             </div>
             <div>
               <label className="text-xs text-gray-500 mb-1 block">은행</label>
-              <input type="text" value={form.bank}
-                onChange={e => setForm({...form, bank: e.target.value})}
+              <input type="text" value={form.bank} onChange={e => setForm({...form, bank: e.target.value})}
                 className="w-full border rounded-lg px-3 py-2 text-sm" />
             </div>
             <div className="col-span-2">
               <label className="text-xs text-gray-500 mb-1 block">비고</label>
-              <input type="text" placeholder="메모" value={form.note}
-                onChange={e => setForm({...form, note: e.target.value})}
+              <input type="text" placeholder="메모" value={form.note} onChange={e => setForm({...form, note: e.target.value})}
                 className="w-full border rounded-lg px-3 py-2 text-sm" />
             </div>
           </div>
@@ -206,8 +263,7 @@ export default function TransferPage() {
               className="bg-blue-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700">
               {editItem ? '수정 완료' : '저장'}
             </button>
-            <button onClick={resetForm}
-              className="border px-6 py-2.5 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
+            <button onClick={resetForm} className="border px-6 py-2.5 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
           </div>
         </div>
       )}
