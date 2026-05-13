@@ -107,7 +107,7 @@ export default function ProfitPage() {
     setVarList(varList.filter(i => i.id !== id))
   }
 
-  const toggleExclude = (set: Set<string>, setter: (s: Set<string>) => void, name: string) => {
+  const toggleExclude = (set: Set<string>, setter: React.Dispatch<React.SetStateAction<Set<string>>>, name: string) => {
     setter((prev: Set<string>) => {
       const next = new Set(prev)
       next.has(name) ? next.delete(name) : next.add(name)
