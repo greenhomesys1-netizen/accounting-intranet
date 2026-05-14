@@ -24,6 +24,7 @@ export default function CashbookPage() {
   const thisMonth = new Date().getMonth() + 1
 
   const [list, setList] = useState<Transaction[]>([])
+  const [latestBalance, setLatestBalance] = useState<number>(0)
   const [showForm, setShowForm] = useState(false)
   const [editItem, setEditItem] = useState<Transaction|null>(null)
   const [type, setType] = useState<'income'|'expense'>('income')
@@ -73,7 +74,17 @@ export default function CashbookPage() {
       .gte('date', `${ym}-01`)
       .lte('date', `${ym}-31`)
       .order('date', { ascending: true })
+      .order('id', { ascending: true })
     if (data) setList(data)
+
+    // 상단 잔액: DB 전체에서 가장 마지막 잔액 가져오기
+    const { data: lastTx } = await supabase
+      .from('transactions')
+      .select('balance')
+      .order('date', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(1)
+    if (lastTx && lastTx.length > 0) setLatestBalance(lastTx[0].balance)
   }
 
   const resetForm = () => {
@@ -95,8 +106,13 @@ export default function CashbookPage() {
         expense: type === 'expense' ? amt : 0,
       }).eq('id', editItem.id)
     } else {
+      // 가장 마지막 거래의 잔액 가져오기 (날짜+id 기준)
       const { data: lastTx } = await supabase
-        .from('transactions').select('balance').order('date', { ascending: false }).limit(1)
+        .from('transactions')
+        .select('balance')
+        .order('date', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(1)
       const lastBalance = lastTx && lastTx.length > 0 ? lastTx[0].balance : 0
       const newBalance = type === 'income' ? lastBalance + amt : lastBalance - amt
       await supabase.from('transactions').insert({
@@ -266,7 +282,7 @@ export default function CashbookPage() {
         <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
           <p className="text-xs text-gray-500">잔액</p>
           <p className="text-xl font-bold text-blue-600 mt-1">
-            {list.length > 0 ? list[list.length-1].balance.toLocaleString() : 0}원
+            {latestBalance.toLocaleString()}원
           </p>
         </div>
       </div>
