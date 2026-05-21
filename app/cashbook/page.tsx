@@ -158,7 +158,7 @@ export default function CashbookPage() {
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false }) as any[][]
 
         const items = []
-        let runningBalance = 0
+        
 
         for (let i = 1; i < rows.length; i++) {
           const row = rows[i]
@@ -183,7 +183,8 @@ export default function CashbookPage() {
 
           if (!category && income === 0 && expense === 0) continue
 
-          runningBalance = runningBalance + income - expense
+          const balanceRaw = row[8]
+          const balance = balanceRaw ? parseFloat(String(balanceRaw).replace(/,/g,'')) || 0 : 0
 
           items.push({
             date: dateStr,
@@ -192,7 +193,7 @@ export default function CashbookPage() {
             evidence_type: evidenceType,
             income,
             expense,
-            balance: runningBalance,
+            balance,
             note,
           })
         }
