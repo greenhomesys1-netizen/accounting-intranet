@@ -73,8 +73,8 @@ export default function CashbookPage() {
       .select('*')
       .gte('date', `${ym}-01`)
       .lte('date', `${ym}-31`)
-      order('date', { ascending: false })
-      order('id', { ascending: false })
+      .order('date', { ascending: false })  //
+      .order('id', { ascending: false })    //
     if (data) setList(data)
 
     // 상단 잔액: DB 전체에서 가장 마지막 잔액 가져오기
